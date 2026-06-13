@@ -49,12 +49,9 @@
 
   <div id="lobby">
     <button onclick="createRoom()">Create Room</button>
-
     <br>
-
     <input id="roomInput" placeholder="Room code">
     <button onclick="joinRoom()">Join Room</button>
-
     <p id="lobbyMessage"></p>
   </div>
 
@@ -107,6 +104,7 @@
 
     function joinRoom() {
       const code = roomInput.value.trim();
+
       if (!code) {
         lobbyMessage.textContent = "Enter a room code.";
         return;
