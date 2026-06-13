@@ -10,26 +10,31 @@
       color: white;
     }
 
-    #flag {
-      width: 300px;
-      height: 200px;
-      object-fit: contain;
-      margin: 30px;
-      border-radius: 12px;
-      background: #222;
-    }
-
     input {
-      font-size: 24px;
+      font-size: 22px;
       padding: 10px;
-      width: 300px;
+      width: 280px;
+      margin: 8px;
     }
 
     button {
       font-size: 20px;
       padding: 10px 20px;
-      margin: 10px;
+      margin: 8px;
       cursor: pointer;
+    }
+
+    #flag {
+      width: 320px;
+      height: 220px;
+      object-fit: contain;
+      margin: 25px;
+      border-radius: 12px;
+      background: #222;
+    }
+
+    #game {
+      display: none;
     }
 
     #message {
@@ -42,50 +47,103 @@
 
   <h1>Guess the Flag 1v1</h1>
 
-  <p id="status">Connecting...</p>
-  <p id="score">Score: 0 - 0</p>
+  <div id="lobby">
+    <button onclick="createRoom()">Create Room</button>
 
-  <img id="flag" src="">
+    <br>
 
-  <br>
+    <input id="roomInput" placeholder="Room code">
+    <button onclick="joinRoom()">Join Room</button>
 
-  <input id="guessInput" placeholder="Country name">
-  <br>
+    <p id="lobbyMessage"></p>
+  </div>
 
-  <button onclick="sendGuess()">Guess</button>
-  <button onclick="voteSkip()">Vote Skip</button>
+  <div id="game">
+    <h2>Room: <span id="roomCode"></span></h2>
+    <p id="status">Waiting...</p>
+    <p id="score">Score: 0 - 0</p>
 
-  <p id="skipText">Skip votes: 0</p>
-  <p id="message"></p>
+    <img id="flag" src="">
+
+    <br>
+
+    <input id="guessInput" placeholder="Country name">
+    <br>
+
+    <button onclick="sendGuess()">Guess</button>
+    <button onclick="voteSkip()">Vote Skip</button>
+
+    <p id="skipText">Skip votes: 0</p>
+    <p id="message"></p>
+  </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
 
-    const flag = document.getElementById("flag");
+    const lobby = document.getElementById("lobby");
+    const game = document.getElementById("game");
+    const roomInput = document.getElementById("roomInput");
+    const lobbyMessage = document.getElementById("lobbyMessage");
+
+    const roomCodeText = document.getElementById("roomCode");
     const status = document.getElementById("status");
     const score = document.getElementById("score");
+    const flag = document.getElementById("flag");
     const input = document.getElementById("guessInput");
     const message = document.getElementById("message");
     const skipText = document.getElementById("skipText");
 
     let myId = null;
+    let myPlayerNumber = null;
 
     socket.on("connect", () => {
       myId = socket.id;
     });
 
-    socket.on("playerNumber", number => {
-      status.textContent = "You are Player " + number;
+    function createRoom() {
+      socket.emit("createRoom");
+    }
+
+    function joinRoom() {
+      const code = roomInput.value.trim();
+      if (!code) {
+        lobbyMessage.textContent = "Enter a room code.";
+        return;
+      }
+
+      socket.emit("joinRoom", code);
+    }
+
+    socket.on("roomCreated", data => {
+      myPlayerNumber = data.playerNumber;
+      enterGame(data.code);
+      message.textContent = "Share this room code with your friend.";
     });
 
-    socket.on("players", count => {
-      if (count < 2) {
-        flag.src = "";
+    socket.on("roomJoined", data => {
+      myPlayerNumber = data.playerNumber;
+      enterGame(data.code);
+      message.textContent = "Joined room.";
+    });
+
+    function enterGame(code) {
+      lobby.style.display = "none";
+      game.style.display = "block";
+      roomCodeText.textContent = code;
+      status.textContent = "You are Player " + myPlayerNumber;
+    }
+
+    socket.on("roomUpdate", room => {
+      if (room.players < 2) {
         message.textContent = "Waiting for another player...";
+        flag.src = "";
       } else {
         message.textContent = "Game started!";
       }
+
+      updateScore(room.scores);
+      skipText.textContent = "Skip votes: " + room.skipVotes;
     });
 
     socket.on("newFlag", data => {
@@ -120,15 +178,14 @@
       message.textContent = "Skipped! Answer was " + answer;
     });
 
-    socket.on("reset", () => {
+    socket.on("playerLeft", () => {
       flag.src = "";
-      score.textContent = "Score: 0 - 0";
+      message.textContent = "Other player left. Waiting for another player...";
       skipText.textContent = "Skip votes: 0";
-      message.textContent = "Other player left. Waiting...";
     });
 
-    socket.on("full", () => {
-      document.body.innerHTML = "<h1>Game is full</h1>";
+    socket.on("errorMessage", text => {
+      lobbyMessage.textContent = text;
     });
 
     function sendGuess() {
@@ -147,7 +204,7 @@
     }
 
     function updateScore(scores) {
-      const values = Object.values(scores);
+      const values = Object.values(scores || {});
       const p1 = values[0] || 0;
       const p2 = values[1] || 0;
       score.textContent = `Score: ${p1} - ${p2}`;

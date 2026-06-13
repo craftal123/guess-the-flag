@@ -1,18 +1,215 @@
-{
-  "name": "flag-game",
-  "version": "1.0.0",
-  "description": "",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "dependencies": {
-    "express": "^5.2.1",
-    "socket.io": "^4.8.3",
-    "world-countries": "^5.1.0"
-  }
-}
+<!DOCTYPE html>
+<html>
+<head>
+  <title>1v1 Guess the Flag</title>
+  <style>
+    body {
+      font-family: Arial;
+      text-align: center;
+      background: #111;
+      color: white;
+    }
+
+    input {
+      font-size: 22px;
+      padding: 10px;
+      width: 280px;
+      margin: 8px;
+    }
+
+    button {
+      font-size: 20px;
+      padding: 10px 20px;
+      margin: 8px;
+      cursor: pointer;
+    }
+
+    #flag {
+      width: 320px;
+      height: 220px;
+      object-fit: contain;
+      margin: 25px;
+      border-radius: 12px;
+      background: #222;
+    }
+
+    #game {
+      display: none;
+    }
+
+    #message {
+      font-size: 24px;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Guess the Flag 1v1</h1>
+
+  <div id="lobby">
+    <button onclick="createRoom()">Create Room</button>
+
+    <br>
+
+    <input id="roomInput" placeholder="Room code">
+    <button onclick="joinRoom()">Join Room</button>
+
+    <p id="lobbyMessage"></p>
+  </div>
+
+  <div id="game">
+    <h2>Room: <span id="roomCode"></span></h2>
+    <p id="status">Waiting...</p>
+    <p id="score">Score: 0 - 0</p>
+
+    <img id="flag" src="">
+
+    <br>
+
+    <input id="guessInput" placeholder="Country name">
+    <br>
+
+    <button onclick="sendGuess()">Guess</button>
+    <button onclick="voteSkip()">Vote Skip</button>
+
+    <p id="skipText">Skip votes: 0</p>
+    <p id="message"></p>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+
+    const lobby = document.getElementById("lobby");
+    const game = document.getElementById("game");
+    const roomInput = document.getElementById("roomInput");
+    const lobbyMessage = document.getElementById("lobbyMessage");
+
+    const roomCodeText = document.getElementById("roomCode");
+    const status = document.getElementById("status");
+    const score = document.getElementById("score");
+    const flag = document.getElementById("flag");
+    const input = document.getElementById("guessInput");
+    const message = document.getElementById("message");
+    const skipText = document.getElementById("skipText");
+
+    let myId = null;
+    let myPlayerNumber = null;
+
+    socket.on("connect", () => {
+      myId = socket.id;
+    });
+
+    function createRoom() {
+      socket.emit("createRoom");
+    }
+
+    function joinRoom() {
+      const code = roomInput.value.trim();
+      if (!code) {
+        lobbyMessage.textContent = "Enter a room code.";
+        return;
+      }
+
+      socket.emit("joinRoom", code);
+    }
+
+    socket.on("roomCreated", data => {
+      myPlayerNumber = data.playerNumber;
+      enterGame(data.code);
+      message.textContent = "Share this room code with your friend.";
+    });
+
+    socket.on("roomJoined", data => {
+      myPlayerNumber = data.playerNumber;
+      enterGame(data.code);
+      message.textContent = "Joined room.";
+    });
+
+    function enterGame(code) {
+      lobby.style.display = "none";
+      game.style.display = "block";
+      roomCodeText.textContent = code;
+      status.textContent = "You are Player " + myPlayerNumber;
+    }
+
+    socket.on("roomUpdate", room => {
+      if (room.players < 2) {
+        message.textContent = "Waiting for another player...";
+        flag.src = "";
+      } else {
+        message.textContent = "Game started!";
+      }
+
+      updateScore(room.scores);
+      skipText.textContent = "Skip votes: " + room.skipVotes;
+    });
+
+    socket.on("newFlag", data => {
+      flag.src = data.image;
+      message.textContent = "";
+      skipText.textContent = "Skip votes: 0";
+      updateScore(data.scores);
+      input.value = "";
+      input.focus();
+    });
+
+    socket.on("correct", data => {
+      message.textContent = "Correct! Answer was " + data.answer;
+      updateScore(data.scores);
+    });
+
+    socket.on("winner", winnerId => {
+      flag.src = "";
+
+      if (winnerId === myId) {
+        message.textContent = "You won!";
+      } else {
+        message.textContent = "You lost!";
+      }
+    });
+
+    socket.on("skipVotes", votes => {
+      skipText.textContent = "Skip votes: " + votes;
+    });
+
+    socket.on("skipped", answer => {
+      message.textContent = "Skipped! Answer was " + answer;
+    });
+
+    socket.on("playerLeft", () => {
+      flag.src = "";
+      message.textContent = "Other player left. Waiting for another player...";
+      skipText.textContent = "Skip votes: 0";
+    });
+
+    socket.on("errorMessage", text => {
+      lobbyMessage.textContent = text;
+    });
+
+    function sendGuess() {
+      socket.emit("guess", input.value);
+      input.value = "";
+    }
+
+    input.addEventListener("keydown", e => {
+      if (e.key === "Enter") {
+        sendGuess();
+      }
+    });
+
+    function voteSkip() {
+      socket.emit("voteSkip");
+    }
+
+    function updateScore(scores) {
+      const values = Object.values(scores || {});
+      const p1 = values[0] || 0;
+      const p2 = values[1] || 0;
+      score.textContent = `Score: ${p1} - ${p2}`;
+    }
+  </script>
+
+</body>
+</html>
