@@ -1,22 +1,24 @@
 ﻿const express = require("express");
 const app = express();
 const http = require("http").createServer(app);
-const io = require("socket.io")(http);
+const io = require("socket.io")(http, {
+    pingTimeout: 20000,
+    pingInterval: 25000
+});
+
 const countries = require("world-countries");
 
 app.use(express.static("public"));
 
-const flags = countries
-    .filter(c => c.cca2 && c.name && c.name.common)
-    .map(c => ({
-        country: c.name.common,
-        aliases: [
-            c.name.common,
-            c.name.official,
-            ...(c.altSpellings || [])
-        ].map(x => x.toLowerCase()),
-        image: `https://flagcdn.com/w320/${c.cca2.toLowerCase()}.png`
-    }));
+const flags = countries.map(c => ({
+    country: c.name.common,
+    aliases: [
+        c.name.common,
+        c.name.official,
+        ...(c.altSpellings || [])
+    ].map(x => String(x).toLowerCase()),
+    image: `https://flagcdn.com/w320/${c.cca2.toLowerCase()}.png`
+}));
 
 const rooms = {};
 
@@ -24,23 +26,44 @@ function makeRoomCode() {
     return Math.random().toString(36).substring(2, 7).toUpperCase();
 }
 
-function getPublicRoom(room) {
-    return {
-        code: room.code,
+function leaveRoom(socket) {
+    const code = socket.data.roomCode;
+    if (!code || !rooms[code]) return;
+
+    const room = rooms[code];
+
+    room.players = room.players.filter(id => id !== socket.id);
+    delete room.scores[socket.id];
+    room.skipVotes.delete(socket.id);
+
+    socket.leave(code);
+    socket.data.roomCode = null;
+
+    if (room.players.length === 0) {
+        delete rooms[code];
+        return;
+    }
+
+    room.currentFlag = null;
+    room.gameOver = false;
+
+    io.to(code).emit("playerLeft");
+    io.to(code).emit("roomUpdate", {
+        code,
         players: room.players.length,
         scores: room.scores,
         skipVotes: room.skipVotes.size
-    };
+    });
 }
 
-function newFlag(roomCode) {
-    const room = rooms[roomCode];
-    if (!room) return;
+function newFlag(code) {
+    const room = rooms[code];
+    if (!room || room.players.length < 2) return;
 
     room.currentFlag = flags[Math.floor(Math.random() * flags.length)];
     room.skipVotes.clear();
 
-    io.to(roomCode).emit("newFlag", {
+    io.to(code).emit("newFlag", {
         image: room.currentFlag.image,
         scores: room.scores,
         skipVotes: 0
@@ -49,35 +72,36 @@ function newFlag(roomCode) {
 
 io.on("connection", socket => {
     socket.on("createRoom", () => {
-        let code = makeRoomCode();
+        leaveRoom(socket);
 
-        while (rooms[code]) {
-            code = makeRoomCode();
-        }
+        let code = makeRoomCode();
+        while (rooms[code]) code = makeRoomCode();
 
         rooms[code] = {
-            code,
             players: [socket.id],
             scores: { [socket.id]: 0 },
-            currentFlag: null,
             skipVotes: new Set(),
+            currentFlag: null,
             gameOver: false
         };
 
         socket.join(code);
         socket.data.roomCode = code;
 
-        socket.emit("roomCreated", {
-            code,
-            playerNumber: 1
-        });
+        socket.emit("roomCreated", { code, playerNumber: 1 });
 
-        io.to(code).emit("roomUpdate", getPublicRoom(rooms[code]));
+        io.to(code).emit("roomUpdate", {
+            code,
+            players: 1,
+            scores: rooms[code].scores,
+            skipVotes: 0
+        });
     });
 
     socket.on("joinRoom", code => {
-        code = String(code).trim().toUpperCase();
+        leaveRoom(socket);
 
+        code = String(code).trim().toUpperCase();
         const room = rooms[code];
 
         if (!room) {
@@ -96,12 +120,14 @@ io.on("connection", socket => {
         socket.join(code);
         socket.data.roomCode = code;
 
-        socket.emit("roomJoined", {
-            code,
-            playerNumber: 2
-        });
+        socket.emit("roomJoined", { code, playerNumber: 2 });
 
-        io.to(code).emit("roomUpdate", getPublicRoom(room));
+        io.to(code).emit("roomUpdate", {
+            code,
+            players: room.players.length,
+            scores: room.scores,
+            skipVotes: room.skipVotes.size
+        });
 
         if (room.players.length === 2) {
             newFlag(code);
@@ -150,26 +176,12 @@ io.on("connection", socket => {
         }
     });
 
+    socket.on("leaveRoom", () => {
+        leaveRoom(socket);
+    });
+
     socket.on("disconnect", () => {
-        const code = socket.data.roomCode;
-        const room = rooms[code];
-
-        if (!room) return;
-
-        room.players = room.players.filter(id => id !== socket.id);
-        delete room.scores[socket.id];
-        room.skipVotes.delete(socket.id);
-
-        if (room.players.length === 0) {
-            delete rooms[code];
-            return;
-        }
-
-        room.currentFlag = null;
-        room.gameOver = false;
-
-        io.to(code).emit("playerLeft");
-        io.to(code).emit("roomUpdate", getPublicRoom(room));
+        leaveRoom(socket);
     });
 });
 
