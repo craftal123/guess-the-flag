@@ -10,20 +10,51 @@ const countries = require("world-countries");
 
 app.use(express.static("public"));
 
-const flags = countries.map(c => ({
-    country: c.name.common,
-    aliases: [
-        c.name.common,
-        c.name.official,
-        ...(c.altSpellings || [])
-    ].map(x => String(x).toLowerCase()),
-    image: `https://flagcdn.com/w320/${c.cca2.toLowerCase()}.png`
-}));
+function normalizeText(text) {
+    return String(text)
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/ı/g, "i")
+        .replace(/ø/g, "o")
+        .replace(/æ/g, "ae")
+        .replace(/œ/g, "oe")
+        .trim();
+}
+
+const flags = countries
+    .filter(c => c.cca2 && c.name && c.name.common)
+    .map(c => ({
+        country: c.name.common,
+        aliases: [
+            c.name.common,
+            c.name.official,
+            ...(c.altSpellings || [])
+        ].map(normalizeText),
+        image: `https://flagcdn.com/w320/${c.cca2.toLowerCase()}.png`
+    }));
+
+const turkey = flags.find(f => f.country === "Turkey" || f.country === "Türkiye");
+if (turkey) {
+    turkey.aliases.push("turkey", "turkiye");
+}
 
 const rooms = {};
 
 function makeRoomCode() {
     return Math.random().toString(36).substring(2, 7).toUpperCase();
+}
+
+function roomUpdate(code) {
+    const room = rooms[code];
+    if (!room) return;
+
+    io.to(code).emit("roomUpdate", {
+        code,
+        players: room.players.length,
+        scores: room.scores,
+        skipVotes: room.skipVotes.size
+    });
 }
 
 function leaveRoom(socket) {
@@ -48,19 +79,21 @@ function leaveRoom(socket) {
     room.gameOver = false;
 
     io.to(code).emit("playerLeft");
-    io.to(code).emit("roomUpdate", {
-        code,
-        players: room.players.length,
-        scores: room.scores,
-        skipVotes: room.skipVotes.size
-    });
+    roomUpdate(code);
 }
 
 function newFlag(code) {
     const room = rooms[code];
     if (!room || room.players.length < 2) return;
 
-    room.currentFlag = flags[Math.floor(Math.random() * flags.length)];
+    if (room.usedFlags.size >= flags.length) {
+        room.usedFlags.clear();
+    }
+
+    const availableFlags = flags.filter(flag => !room.usedFlags.has(flag.country));
+
+    room.currentFlag = availableFlags[Math.floor(Math.random() * availableFlags.length)];
+    room.usedFlags.add(room.currentFlag.country);
     room.skipVotes.clear();
 
     io.to(code).emit("newFlag", {
@@ -82,20 +115,15 @@ io.on("connection", socket => {
             scores: { [socket.id]: 0 },
             skipVotes: new Set(),
             currentFlag: null,
-            gameOver: false
+            gameOver: false,
+            usedFlags: new Set()
         };
 
         socket.join(code);
         socket.data.roomCode = code;
 
         socket.emit("roomCreated", { code, playerNumber: 1 });
-
-        io.to(code).emit("roomUpdate", {
-            code,
-            players: 1,
-            scores: rooms[code].scores,
-            skipVotes: 0
-        });
+        roomUpdate(code);
     });
 
     socket.on("joinRoom", code => {
@@ -121,13 +149,7 @@ io.on("connection", socket => {
         socket.data.roomCode = code;
 
         socket.emit("roomJoined", { code, playerNumber: 2 });
-
-        io.to(code).emit("roomUpdate", {
-            code,
-            players: room.players.length,
-            scores: room.scores,
-            skipVotes: room.skipVotes.size
-        });
+        roomUpdate(code);
 
         if (room.players.length === 2) {
             newFlag(code);
@@ -140,7 +162,7 @@ io.on("connection", socket => {
 
         if (!room || !room.currentFlag || room.gameOver) return;
 
-        const cleanGuess = String(guess).trim().toLowerCase();
+        const cleanGuess = normalizeText(guess);
 
         if (room.currentFlag.aliases.includes(cleanGuess)) {
             room.scores[socket.id]++;
@@ -167,7 +189,6 @@ io.on("connection", socket => {
         if (!room || !room.currentFlag || room.gameOver) return;
 
         room.skipVotes.add(socket.id);
-
         io.to(code).emit("skipVotes", room.skipVotes.size);
 
         if (room.skipVotes.size >= room.players.length) {
