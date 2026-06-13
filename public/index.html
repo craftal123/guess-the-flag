@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>1v1 Guess the Flag</title>
+  <style>
+    body {
+      font-family: Arial;
+      text-align: center;
+      background: #111;
+      color: white;
+    }
+
+    #flag {
+      width: 300px;
+      height: 200px;
+      object-fit: contain;
+      margin: 30px;
+      border-radius: 12px;
+      background: #222;
+    }
+
+    input {
+      font-size: 24px;
+      padding: 10px;
+      width: 300px;
+    }
+
+    button {
+      font-size: 20px;
+      padding: 10px 20px;
+      margin: 10px;
+      cursor: pointer;
+    }
+
+    #message {
+      font-size: 24px;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Guess the Flag 1v1</h1>
+
+  <p id="status">Connecting...</p>
+  <p id="score">Score: 0 - 0</p>
+
+  <img id="flag" src="">
+
+  <br>
+
+  <input id="guessInput" placeholder="Country name">
+  <br>
+
+  <button onclick="sendGuess()">Guess</button>
+  <button onclick="voteSkip()">Vote Skip</button>
+
+  <p id="skipText">Skip votes: 0</p>
+  <p id="message"></p>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+
+    const flag = document.getElementById("flag");
+    const status = document.getElementById("status");
+    const score = document.getElementById("score");
+    const input = document.getElementById("guessInput");
+    const message = document.getElementById("message");
+    const skipText = document.getElementById("skipText");
+
+    let myId = null;
+
+    socket.on("connect", () => {
+      myId = socket.id;
+    });
+
+    socket.on("playerNumber", number => {
+      status.textContent = "You are Player " + number;
+    });
+
+    socket.on("players", count => {
+      if (count < 2) {
+        flag.src = "";
+        message.textContent = "Waiting for another player...";
+      } else {
+        message.textContent = "Game started!";
+      }
+    });
+
+    socket.on("newFlag", data => {
+      flag.src = data.image;
+      message.textContent = "";
+      skipText.textContent = "Skip votes: 0";
+      updateScore(data.scores);
+      input.value = "";
+      input.focus();
+    });
+
+    socket.on("correct", data => {
+      message.textContent = "Correct! Answer was " + data.answer;
+      updateScore(data.scores);
+    });
+
+    socket.on("winner", winnerId => {
+      flag.src = "";
+
+      if (winnerId === myId) {
+        message.textContent = "You won!";
+      } else {
+        message.textContent = "You lost!";
+      }
+    });
+
+    socket.on("skipVotes", votes => {
+      skipText.textContent = "Skip votes: " + votes;
+    });
+
+    socket.on("skipped", answer => {
+      message.textContent = "Skipped! Answer was " + answer;
+    });
+
+    socket.on("reset", () => {
+      flag.src = "";
+      score.textContent = "Score: 0 - 0";
+      skipText.textContent = "Skip votes: 0";
+      message.textContent = "Other player left. Waiting...";
+    });
+
+    socket.on("full", () => {
+      document.body.innerHTML = "<h1>Game is full</h1>";
+    });
+
+    function sendGuess() {
+      socket.emit("guess", input.value);
+      input.value = "";
+    }
+
+    input.addEventListener("keydown", e => {
+      if (e.key === "Enter") {
+        sendGuess();
+      }
+    });
+
+    function voteSkip() {
+      socket.emit("voteSkip");
+    }
+
+    function updateScore(scores) {
+      const values = Object.values(scores);
+      const p1 = values[0] || 0;
+      const p2 = values[1] || 0;
+      score.textContent = `Score: ${p1} - ${p2}`;
+    }
+  </script>
+
+</body>
+</html>
